@@ -1,4 +1,5 @@
-params.config
+*.config
+*.data
 ApplicationInsightsRBAC.csv
 .idea
 bin
