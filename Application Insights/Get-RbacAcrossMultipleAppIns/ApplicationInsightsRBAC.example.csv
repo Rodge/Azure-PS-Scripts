@@ -1,0 +1,2 @@
+Name;ResourceGroup;RBAC
+some-appins-name;its-rg-name;"[{""RoleAssignmentName"":""some-guid"",""RoleAssignmentId"":""/providers/Microsoft.Authorization/roleAssignments/some-guid"",""Scope"":""/"",""DisplayName"":""Admin Whoever"",""SignInName"":""admin_someone@whatever.com"",""RoleDefinitionName"":""Some kind of administrator"",""RoleDefinitionId"":""another-guid"",""ObjectId"":""also-another-guid"",""ObjectType"":""User"",""CanDelegate"":false,""Description"":null,""ConditionVersion"":null,""Condition"":null}]"

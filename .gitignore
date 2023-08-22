@@ -1,1 +1,5 @@
 params.config
+ApplicationInsightsRBAC.csv
+.idea
+bin
+obj
