@@ -7,54 +7,55 @@ public static class CompareRBACs
 {
     public static void Main(string[] args)
     {
-        var csvFile = args[0];
-        var csvLines = File.ReadAllLines(csvFile).ToList().Skip(1).ToList();
+        var applicationInsightsRbacCsvFile = args[0];
+        var csvLines = File.ReadAllLines(applicationInsightsRbacCsvFile).ToList().Skip(1).ToList();
         var appInsRows = csvLines.Select(CreateAppInsRow).ToList();
         
         var appInsRowsByName = appInsRows
             .OrderBy(m => m.Name)
             .ToDictionary(m => m.Name);
 
-        var unmatchedOnes = new List<Unmatched>();
+        var unmatchedInOtherAppInsRbac = new List<Unmatched>();
         foreach (var appInsRowKVP in appInsRowsByName)
         {
-            var name = appInsRowKVP.Key;
-            var row = appInsRowKVP.Value;
-            
-            var otherRows = appInsRowsByName
+            var appInsRowRBAC = appInsRowKVP.Value.RBAC?
                 .OrderBy(m => m.Key)
-                .Where(m => m.Key != name);
+                .ToList();
             
-            foreach (var otherRowKVP in otherRows)
+            var otherAppInsRowsByName = appInsRowsByName
+                .Where(m => m.Key != appInsRowKVP.Key);
+            
+            foreach (var otherAppInsRowKVP in otherAppInsRowsByName)
             {
-                var otherRow = otherRowKVP.Value;
+                var otherAppInsRowRBAC = otherAppInsRowKVP.Value.RBAC?
+                    .OrderBy(m => m.Key)
+                    .ToList();
                 
-                var rowRBACOrdered = row.RBAC?.OrderBy(m => m.Key).ToList();
-                var otherRowRBACOrdered = otherRow.RBAC?.OrderBy(m => m.Key).ToList();
-                
-                if (rowRBACOrdered == null || otherRowRBACOrdered == null)
+                if (appInsRowRBAC == null || otherAppInsRowRBAC == null)
                     continue;
                 
-                foreach (var rowRBAC in rowRBACOrdered)
+                foreach (var rbacEntry in appInsRowRBAC)
                 {
-                    var matchFoundInOtherRowRBAC = otherRowRBACOrdered.Any(m => m.Key == rowRBAC.Key);
+                    var matchFoundInOtherRowRBAC = otherAppInsRowRBAC.
+                        Exists(m => m.Key == rbacEntry.Key);
+                    
                     if (!matchFoundInOtherRowRBAC)
                     {
-                        unmatchedOnes.Add(new Unmatched
+                        unmatchedInOtherAppInsRbac.Add(new Unmatched
                         {
-                            RoleAssignmentName = rowRBAC.Key,
-                            RoleDefinitionName = rowRBAC.Value.RoleDefinitionName,
-                            DisplayName = rowRBAC.Value.DisplayName, 
-                            SignInName = rowRBAC.Value.SignInName, 
-                            Name = name,
-                            OffendedAppInsName = otherRow.Name
+                            RoleAssignmentName = rbacEntry.Key,
+                            RoleDefinitionName = rbacEntry.Value.RoleDefinitionName,
+                            DisplayName = rbacEntry.Value.DisplayName, 
+                            SignInName = rbacEntry.Value.SignInName, 
+                            Name = appInsRowKVP.Key,
+                            OffendedAppInsName = otherAppInsRowKVP.Value.Name
                         });
                     }
                 }
             }
         }
         
-        PrintUnmatchedOnesNotIgnored(unmatchedOnes);
+        PrintUnmatchedOnesNotIgnored(unmatchedInOtherAppInsRbac);
     }
 
     private static void PrintUnmatchedOnesNotIgnored(List<Unmatched> unmatchedOnes)
@@ -64,9 +65,9 @@ public static class CompareRBACs
         foreach (var unmatchedOne in unmatchedOnes)
         {
             var ignored =
-                ignoredDisplayNames.Any(m => unmatchedOne.DisplayName.Contains(m)) 
+                ignoredDisplayNames.Exists(m => unmatchedOne.DisplayName.Contains(m)) 
                 ||
-                ignoredNames.Any(m => unmatchedOne.Name.Contains(m));
+                ignoredNames.Exists(m => unmatchedOne.Name.Contains(m));
 
             if (!ignored)
                 Console.WriteLine(unmatchedOne.Offence);
@@ -77,31 +78,17 @@ public static class CompareRBACs
     {
         var ignoredNamesFile = "..\\..\\..\\ignoredNames.data";
         var ignoredDisplayNamesFile = "..\\..\\..\\ignoredDisplayNames.data";
-        ignoredNames = new List<string>();
-        ignoredDisplayNames = new List<string>();
-
-        var ignoringStuff = false;
-
+        
         // Read values from file into ignoredDisplayNames and ignoredNames
-        if (File.Exists(ignoredDisplayNamesFile))
-        {
-            var ignoredDisplayNamesFileLines = File.ReadAllLines(ignoredDisplayNamesFile);
-            if (ignoredDisplayNamesFileLines.Any())
-                ignoringStuff = true;
-            
-            ignoredDisplayNames.AddRange(ignoredDisplayNamesFileLines);
-        }
+        ignoredDisplayNames = File.Exists(ignoredDisplayNamesFile) 
+            ? File.ReadAllLines(ignoredDisplayNamesFile).ToList() 
+            : new List<string>();
 
-        if (File.Exists(ignoredNamesFile))
-        {
-            var ignoredNamesFileLines = File.ReadAllLines(ignoredNamesFile);
-            if (ignoredNamesFileLines.Any())
-                ignoringStuff = true;
-            
-            ignoredNames.AddRange(ignoredNamesFileLines);
-        }
+        ignoredNames = File.Exists(ignoredNamesFile) 
+            ? File.ReadAllLines(ignoredNamesFile).ToList() 
+            : new List<string>();
 
-        return ignoringStuff;
+        return ignoredNames.Any() || ignoredDisplayNames.Any();
     }
 
     private static AppInsRow CreateAppInsRow(string line)
