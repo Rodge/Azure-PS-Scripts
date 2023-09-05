@@ -7,8 +7,10 @@ public class Unmatched
     public string DisplayName { get; set; }
     public string SignInName { get; set; }
     public string Name { get; set; }
+    
+    public string ObjectId { get; set; }
     public string OffendedAppInsName { get; set; }
 
     public string Offence =>
-        $"No match for {RoleAssignmentName} ({RoleDefinitionName} for {DisplayName} ({SignInName})) from {Name} in {OffendedAppInsName}";
+        $"No match for ObjectId {ObjectId} {RoleDefinitionName} ({DisplayName} / {SignInName})) from {Name} in {OffendedAppInsName}";
 }
