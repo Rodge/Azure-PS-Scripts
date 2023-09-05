@@ -2,7 +2,7 @@ namespace CompareRBACs.Models;
 
 public class AppInsRow
 {
-    public string Name { get; set; }
+    public string AppInsName { get; set; }
     public string ResourceGroup { get; set; }
     public Dictionary<string, RBAC>? RBAC { get; set; }
 }
