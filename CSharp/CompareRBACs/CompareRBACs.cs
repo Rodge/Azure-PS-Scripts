@@ -8,61 +8,82 @@ public static class CompareRBACs
     public static void Main(string[] args)
     {
         var applicationInsightsRbacCsvFile = args[0];
-        var csvLines = File.ReadAllLines(applicationInsightsRbacCsvFile).ToList().Skip(1).ToList();
-        var appInsRows = csvLines.Select(CreateAppInsRow).ToList();
-        
-        var appInsRowsByName = appInsRows
-            .OrderBy(m => m.Name)
-            .ToDictionary(m => m.Name);
+        var logAnalyticsWorkspaceRbacCsvFile = args[1];
+        var appInsCsvLines = File.ReadAllLines(applicationInsightsRbacCsvFile).ToList().Skip(1).ToList();
+        var logAnalyticsCsvLines = File.ReadAllLines(logAnalyticsWorkspaceRbacCsvFile).ToList().Skip(1).ToList();
 
-        var unmatchedInOtherAppInsRbac = new List<Unmatched>();
-        foreach (var appInsRowKVP in appInsRowsByName)
+        var appInsRows = appInsCsvLines.Select(CreateAppInsRow).ToList();
+        CompareAppInsRbacs(appInsRows);
+
+        var rbacsInAppInsRows = appInsRows
+            .Where(m => m.RBAC != null)
+            .SelectMany(m => m.RBAC!.Values)
+            .DistinctBy(m => $"{m.ObjectId} {m.RoleDefinitionName}")
+            .OrderBy(m => $"{m.ObjectId} {m.RoleDefinitionName}")
+            .ToList();
+        
+        var logAnalyticsRbacRows = logAnalyticsCsvLines.Select(CreateRbacFromLogAnalyticsRow).ToList();
+
+        CompareAppInsRbacsWithLogAnalyticsRbacs(rbacsInAppInsRows, logAnalyticsRbacRows);
+    }
+
+    private static void CompareAppInsRbacs(List<AppInsRow> appInsRows)
+    {
+        var leftAppInsRowsByName = appInsRows
+            .OrderBy(m => m.AppInsName)
+            .ToDictionary(m => m.AppInsName);
+
+        var offences = new List<Unmatched>();
+        foreach (var (leftAppInsName, leftAppInsRow) in leftAppInsRowsByName)
         {
-            var appInsRowRBAC = appInsRowKVP.Value.RBAC?
+            var rbacForLeftAppInsRow = leftAppInsRow.RBAC?
                 .OrderBy(m => m.Key)
-                .ToList();
+                .ToList(); // Ordered by Key being $"{ObjectId} {RoleDefinitionName}"
             
-            var otherAppInsRowsByName = appInsRowsByName
-                .Where(m => m.Key != appInsRowKVP.Key);
+            var possiblyOffendedAppInsRows = leftAppInsRowsByName
+                .Where(m => m.Key != leftAppInsName);
             
-            foreach (var otherAppInsRowKVP in otherAppInsRowsByName)
+            foreach (var (_, possiblyOffendedAppInsRow) in possiblyOffendedAppInsRows)
             {
-                var otherAppInsRowRBAC = otherAppInsRowKVP.Value.RBAC?
+                var rbacForPossiblyOffendedAppInsRow = possiblyOffendedAppInsRow.RBAC?
                     .OrderBy(m => m.Key)
                     .ToList();
                 
-                if (appInsRowRBAC == null || otherAppInsRowRBAC == null)
+                if (rbacForLeftAppInsRow == null || rbacForPossiblyOffendedAppInsRow == null)
                     continue;
                 
-                foreach (var rbacEntry in appInsRowRBAC)
+                foreach (var rbacEntryInLeftAppInsRow in rbacForLeftAppInsRow)
                 {
-                    var matchFoundInOtherRowRBAC = otherAppInsRowRBAC.
-                        Exists(m => m.Key == rbacEntry.Key);
+                    var didNotCoExist = !rbacForPossiblyOffendedAppInsRow.
+                        Exists(m => 
+                            m.Value.ObjectId == rbacEntryInLeftAppInsRow.Value.ObjectId && 
+                            m.Value.RoleDefinitionName == rbacEntryInLeftAppInsRow.Value.RoleDefinitionName);
                     
-                    if (!matchFoundInOtherRowRBAC)
+                    if (didNotCoExist)
                     {
-                        unmatchedInOtherAppInsRbac.Add(new Unmatched
+                        offences.Add(new Unmatched
                         {
-                            RoleAssignmentName = rbacEntry.Key,
-                            RoleDefinitionName = rbacEntry.Value.RoleDefinitionName,
-                            DisplayName = rbacEntry.Value.DisplayName, 
-                            SignInName = rbacEntry.Value.SignInName, 
-                            Name = appInsRowKVP.Key,
-                            OffendedAppInsName = otherAppInsRowKVP.Value.Name
+                            RoleAssignmentName = rbacEntryInLeftAppInsRow.Value.RoleAssignmentName,
+                            RoleDefinitionName = rbacEntryInLeftAppInsRow.Value.RoleDefinitionName,
+                            DisplayName = rbacEntryInLeftAppInsRow.Value.DisplayName, 
+                            SignInName = rbacEntryInLeftAppInsRow.Value.SignInName, 
+                            Name = leftAppInsName,
+                            ObjectId = rbacEntryInLeftAppInsRow.Value.ObjectId,
+                            OffendedAppInsName = possiblyOffendedAppInsRow.AppInsName
                         });
                     }
                 }
             }
         }
         
-        PrintUnmatchedOnesNotIgnored(unmatchedInOtherAppInsRbac);
+        PrintUnmatchedOnesNotIgnored(offences);
     }
 
     private static void PrintUnmatchedOnesNotIgnored(List<Unmatched> unmatchedOnes)
     {
         TryIgnoreStuff(out var ignoredNames, out var ignoredDisplayNames);
 
-        foreach (var unmatchedOne in unmatchedOnes)
+        foreach (var unmatchedOne in unmatchedOnes.OrderBy(m => $"{m.ObjectId} {m.RoleDefinitionName}"))
         {
             var ignored =
                 ignoredDisplayNames.Exists(m => unmatchedOne.DisplayName.Contains(m)) 
@@ -94,7 +115,7 @@ public static class CompareRBACs
     private static AppInsRow CreateAppInsRow(string line)
     {
         var lineSplit = line.Split(';');
-        var name = lineSplit[0];
+        var appInsName = lineSplit[0];
         var resourceGroup = lineSplit[1];
         var tmp = lineSplit[2].Replace("\"\"", "\"");
         var rbacs = tmp.Substring(1, tmp.Length - 2);
@@ -102,11 +123,52 @@ public static class CompareRBACs
         
         var newAppInsRow = new AppInsRow()
         {
-            Name = name, 
+            AppInsName = appInsName, 
             ResourceGroup = resourceGroup, 
-            RBAC = rbacList?.ToDictionary(m => m.RoleAssignmentName)
+            RBAC = rbacList?
+                .RemoveDuplicatesBy(m => $"{m.ObjectId} {m.RoleDefinitionName}")
+                .ToDictionary(m => $"{m.ObjectId} has {m.RoleDefinitionName}")
         };
         
         return newAppInsRow;
+    }
+    
+    private static RBAC CreateRbacFromLogAnalyticsRow(string line)
+    {
+        // RoleAssignmentName;RoleAssignmentId;Scope;DisplayName;SignInName;RoleDefinitionName;RoleDefinitionId;ObjectId;ObjectType;CanDelegate;Description;ConditionVersion;Condition
+        var lineSplit = line.Split(';');
+        
+        return new RBAC
+        {
+            RoleAssignmentName = lineSplit[0], 
+            RoleAssignmentId = lineSplit[1], 
+            Scope = lineSplit[2], 
+            DisplayName = lineSplit[3], 
+            SignInName = lineSplit[4], 
+            RoleDefinitionName = lineSplit[5], 
+            RoleDefinitionId = lineSplit[6], 
+            ObjectId = lineSplit[7], 
+            ObjectType = lineSplit[8], 
+            CanDelegate = lineSplit[9] == "true", 
+            Description = lineSplit[10], 
+            ConditionVersion = lineSplit[11], 
+            Condition = lineSplit[12]
+        };
+    }
+
+    private static void CompareAppInsRbacsWithLogAnalyticsRbacs(List<RBAC> appInsRbac, List<RBAC> logAnalyticsRbacs)
+    {
+        foreach (var appInsRbacEntry in appInsRbac)
+        {
+            var logAnalyticsRbacEntry = logAnalyticsRbacs
+                .FirstOrDefault(m =>
+                    m.ObjectId == appInsRbacEntry.ObjectId &&
+                    m.RoleDefinitionName == appInsRbacEntry.RoleDefinitionName);
+
+            if (logAnalyticsRbacEntry == null)
+            {
+                Console.WriteLine($"No match for ({appInsRbacEntry.ObjectId}, {appInsRbacEntry.RoleDefinitionName}) in Log Analytics workspace");
+            }
+        }
     }
 }

@@ -1,0 +1,3 @@
+subscriptionId=some-guid
+resourceGroupName=some-name
+logAnalyticsWorkspaceName=some-laws-name
